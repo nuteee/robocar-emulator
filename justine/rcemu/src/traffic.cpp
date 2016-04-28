@@ -47,6 +47,7 @@ int justine::robocar::Traffic::addCop ( CarLexer& cl )
   do
     {
       id = std::rand();
+      c->set_id( id );
     }
   while ( m_smart_cars_map.find ( id ) != m_smart_cars_map.end() );
 
@@ -77,6 +78,14 @@ int justine::robocar::Traffic::addGangster ( CarLexer& cl )
   m_smart_cars_map[id] = c;
 
   return id;
+}
+
+bool justine::robocar::Traffic::inner_route ( std::vector<unsigned int>& r, osmium::unsigned_object_id_type from, osmium::unsigned_object_id_type to ) {
+  
+  //std::cout << "Inner Route: FROM:" << from << ", TO:" << to << "\n"; 
+  r = hasDijkstraPath(from, to);
+  //std::cout << "Routing finished.\n";
+  return true;
 }
 
 
@@ -193,6 +202,26 @@ void justine::robocar::Traffic::cmd_session ( boost::asio::ip::tcp::socket clien
               else
                 length += std::sprintf ( data+length, "<ERR unknown car id>" );
 
+            }
+          else if ( cl.get_cmd() == 102 )
+            {
+              //std::cout << "cl.get_cmd() == 102\n";
+              if ( m_smart_cars_map.find ( cl.get_id() ) != m_smart_cars_map.end() )
+                {
+                  std::shared_ptr<SmartCar> c = m_smart_cars_map[cl.get_id()];
+                  //std::cout << "Car: " << c << "\n";
+                  long unsigned int from = c->from();
+                  long unsigned int to = cl.get_to();
+                  std::cout << "From: " << from << " To: " << to << "\n";
+                  if ( inner_route( c->get_route(), from, to ) ) { 
+                    std::cout << "ROUTE OK\n";
+                    length += std::sprintf ( data+length, "<OK %d>", cl.get_id() );
+                  }
+                  else
+                    length += std::sprintf ( data+length, "<ERR Something went wrong with the routing>" );
+                }
+              else
+                length += std::sprintf ( data+length, "<ERR unknown car id>" );
             }
           else if ( cl.get_cmd() == 1001 )
             {

@@ -32,6 +32,15 @@
  *
  */
 
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/allocators/allocator.hpp>
+#include <boost/interprocess/containers/map.hpp>
+#include <boost/interprocess/containers/vector.hpp>
+#include <boost/interprocess/containers/string.hpp>
+
+
+#include <fstream>
+
 #include <osmium/osm/types.hpp>
 #include <iostream>
 #include <vector>
@@ -39,11 +48,17 @@
 #include <osmreader.hpp>
 #include <algorithm>
 
+#ifdef DEBUG
+#include <iostream>
+#include <chrono>
+#endif
 
 namespace justine
 {
 namespace robocar
 {
+
+
 
 enum class CarType: unsigned int
 {
@@ -82,6 +97,14 @@ public:
   {
     m_type = type;
   }
+  void set_id (int id) {
+    m_id = id;
+  }
+  int get_id()
+  {
+    return m_id;
+  }
+  int m_id{0};
 
   osmium::unsigned_object_id_type to_node() const;
   osmium::unsigned_object_id_type get_max_steps() const;
@@ -118,6 +141,7 @@ protected:
   osmium::unsigned_object_id_type m_from {3130863972};
   osmium::unsigned_object_id_type m_to {0};
   osmium::unsigned_object_id_type m_step {0};
+  
 
 private:
 
@@ -187,6 +211,9 @@ public:
   {
     return m_guided;
   }
+  std::vector<unsigned int>& get_route() {
+    return route;
+  }
   bool set_route ( std::vector<unsigned int> & route );
   virtual void nextEdge ( void );
   virtual void nextGuidedEdge ( void );
@@ -219,6 +246,8 @@ public:
        << static_cast<unsigned int> ( get_type() )
        << " "
        << get_num_captured_gangsters()
+       << " "
+       << m_id
        << " "
        << m_name;
 

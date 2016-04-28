@@ -46,6 +46,7 @@ WORD	[^-:\n \t()]{2,}
 INT	[0123456789]+
 FLOAT	[-.0123456789]+
 ROUTE	"<route"
+INNERROUTE	"<innerroute"
 CAR	"<car"
 POS	"<pos"
 GANGSTERS	"<gangsters"
@@ -86,6 +87,11 @@ DISP	"<disp>"
 				    ss += sn; 				    
 				  }
 				  m_cmd = 101;
+				}
+{INNERROUTE}{WS}{INT}{WS}{INT}	{
+				  std::sscanf(yytext, "<innerroute %d %u>", &m_id, &to);
+				  
+				  m_cmd = 102;
 				}
 {INIT}{WS}{WORD}{WS}("c"|"g")	{
 				  std::sscanf(yytext, "<init %s %c>", name, &role);

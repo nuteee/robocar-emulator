@@ -36,9 +36,8 @@ int main ( int argc, char* argv[] )
 {
 
   int t = std::time ( nullptr );
-#ifdef DEBUG
+
   std::cout << "srand init =  " << t << std::endl;
-#endif
 
   std::srand ( t );
   // std::srand ( 10007 );

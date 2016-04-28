@@ -42,6 +42,12 @@
 #include <boost/interprocess/containers/vector.hpp>
 #include <boost/interprocess/containers/string.hpp>
 
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/graph_traits.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
+#include <boost/graph/properties.hpp>
+#include <boost/property_map/property_map.hpp>
+
 #include <smartcity.hpp>
 #include <car.hpp>
 
@@ -72,6 +78,20 @@ namespace justine
 namespace robocar
 {
 
+typedef boost::adjacency_list<boost::listS, boost::vecS, boost::directedS,
+        boost::property<boost::vertex_name_t, osmium::unsigned_object_id_type>,
+        boost::property<boost::edge_weight_t, int>> NodeRefGraph;
+
+typedef boost::graph_traits<NodeRefGraph>::vertex_descriptor NRGVertex;
+typedef boost::graph_traits<NodeRefGraph>::vertex_iterator NRGVertexIter;
+typedef boost::graph_traits<NodeRefGraph>::edge_descriptor NRGEdge;
+typedef boost::graph_traits<NodeRefGraph>::edge_iterator NRGEdgeIter;
+typedef boost::property_map<NodeRefGraph, boost::vertex_name_t>::type VertexNameMap;
+typedef boost::property_map<NodeRefGraph, boost::vertex_index_t>::type VertexIndexMap;
+typedef boost::iterator_property_map <NRGVertex*, VertexIndexMap, NRGVertex, NRGVertex&> PredecessorMap;
+typedef boost::iterator_property_map <int*, VertexIndexMap, int, int&> DistanceMap;
+typedef boost::property_map<NodeRefGraph, boost::edge_weight_t>::type EdgeWeightMap;
+
 
 enum class TrafficType: unsigned int
 {
@@ -86,11 +106,11 @@ public:
     :m_size ( size ), m_catchdist ( catchdist ), m_type ( type ), m_minutes ( minutes )
   {
 
-#ifdef DEBUG
+
     std::cout << "Attaching shared memory segment called "
               << shm_segment
               << "... " << std::endl;
-#endif
+
 
     segment = new boost::interprocess::managed_shared_memory (
       boost::interprocess::open_only,
@@ -99,9 +119,11 @@ public:
     shm_map =
       segment->find<shm_map_Type> ( "JustineMap" ).first;
 
-#ifdef DEBUG
+
+    nr_graph = bgl_graph();
+
     std::cout << "Initializing routine cars ... " << std::endl;
-#endif
+
 
     if ( type != TrafficType::NORMAL )
       for ( shm_map_Type::iterator iter=shm_map->begin();
@@ -140,9 +162,9 @@ public:
 
       }
 
-#ifdef DEBUG
+
     std::cout << "All routine cars initialized." <<"\n";
-#endif
+
 
     boost::posix_time::ptime now = boost::posix_time::second_clock::universal_time();
 
@@ -162,6 +184,7 @@ public:
     m_thread.join();
     segment->destroy<shm_map_Type> ( "JustineMap" );
     delete segment;
+    delete nr_graph;
   }
 
   void processes ( )
@@ -169,9 +192,9 @@ public:
     std::unique_lock<std::mutex> lk ( m_mutex );
     m_cv.wait ( lk );
 
-#ifdef DEBUG
+
     std::cout << "Traffic simul started." << std::endl;
-#endif
+
 
 
     for ( ; m_run; )
@@ -401,6 +424,143 @@ public:
 
   }
 
+  NodeRefGraph* bgl_graph ( void )
+  {
+
+    NodeRefGraph* nr_graph = new NodeRefGraph();
+
+    int count {0};
+
+    for ( justine::robocar::shm_map_Type::iterator iter=shm_map->begin();
+          iter!=shm_map->end(); ++iter )
+      {
+
+        osmium::unsigned_object_id_type u = iter->first;
+
+        for ( justine::robocar::uint_vector::iterator noderefi = iter->second.m_alist.begin();
+              noderefi!=iter->second.m_alist.end();
+              ++noderefi )
+          {
+
+            NodeRefGraph::vertex_descriptor f;
+            std::map<osmium::unsigned_object_id_type, NRGVertex>::iterator it = nr2v.find ( u );
+
+            if ( it == nr2v.end() )
+              {
+
+                f = boost::add_vertex ( u, *nr_graph );
+                nr2v[u] = f;
+
+                ++count;
+
+              }
+            else
+              {
+
+                f = it->second;
+
+              }
+
+            NodeRefGraph::vertex_descriptor t;
+            it = nr2v.find ( *noderefi );
+            if ( it == nr2v.end() )
+              {
+
+                t = boost::add_vertex ( *noderefi, *nr_graph );
+                nr2v[*noderefi] = t;
+
+                ++count;
+
+              }
+            else
+              {
+
+                t = it->second;
+
+              }
+
+            int to = std::distance ( iter->second.m_alist.begin(), noderefi );
+
+            boost::add_edge ( f, t, palist ( iter->first, to ), *nr_graph );
+
+          }
+
+      }
+
+#ifdef DEBUG
+    std::cout << "# vertices count: " << count << std::endl;;
+    std::cout << "# BGF edges: " << boost::num_edges ( *nr_graph ) << std::endl;;
+    std::cout << "# BGF vertices: " << boost::num_vertices ( *nr_graph ) << std::endl;;
+#endif
+
+    return nr_graph;
+  }
+
+  std::vector<unsigned int> & hasDijkstraPath ( osmium::unsigned_object_id_type from, osmium::unsigned_object_id_type to )
+  {
+    
+    path.clear();
+    
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+
+
+    std::vector<NRGVertex> parents ( boost::num_vertices ( *nr_graph ) );
+    std::vector<int> distances ( boost::num_vertices ( *nr_graph ) );
+
+
+    VertexIndexMap vertexIndexMap = boost::get ( boost::vertex_index, *nr_graph );
+
+    PredecessorMap predecessorMap ( &parents[0], vertexIndexMap );
+    DistanceMap distanceMap ( &distances[0], vertexIndexMap );
+
+
+
+    boost::dijkstra_shortest_paths ( *nr_graph, nr2v[from],
+                                     boost::distance_map ( distanceMap ).predecessor_map ( predecessorMap ) );
+
+    
+
+    VertexNameMap vertexNameMap = boost::get ( boost::vertex_name, *nr_graph );
+
+    
+
+    NRGVertex tov = nr2v[to];
+    NRGVertex fromv = predecessorMap[tov];
+
+    int dist {0};
+
+    while ( fromv != tov )
+      {
+
+        NRGEdge edge = boost::edge ( fromv, tov, *nr_graph ).first;
+
+        //std::cout << vertexNameMap[boost::source ( edge, *nr_graph )]
+        //          << " -> "
+        //          << vertexNameMap[boost::target ( edge, *nr_graph )] << std::endl;
+        dist += distanceMap[fromv];
+
+        path.push_back ( (unsigned int) vertexNameMap[boost::target ( edge, *nr_graph )] );
+
+        tov = fromv;
+        fromv = predecessorMap[tov];
+      }
+    path.push_back ( (unsigned int) from );
+
+    std::reverse ( path.begin(), path.end() );
+
+    //std::cout << std::chrono::duration_cast<std::chrono::milliseconds> (
+    //            std::chrono::high_resolution_clock::now() - start ).count()
+    //          << " ms " << dist << " meters" << std::endl;
+
+    //std::cout << "Size: " << path.size() << "\n";
+    std::copy ( path.begin(), path.end(),
+               std::ostream_iterator<osmium::unsigned_object_id_type> ( std::cout, " " ) );
+
+    return path;
+  }
+
   osmium::unsigned_object_id_type naive_node_for_nearest_gangster ( osmium::unsigned_object_id_type from,
       osmium::unsigned_object_id_type to,
       osmium::unsigned_object_id_type step );
@@ -424,6 +584,9 @@ public:
   }
   
 protected:
+  NodeRefGraph* nr_graph;
+  std::map<osmium::unsigned_object_id_type, NRGVertex> nr2v;
+  std::vector<unsigned int> path;
 
   boost::interprocess::managed_shared_memory *segment;
   boost::interprocess::offset_ptr<shm_map_Type> shm_map;
@@ -436,6 +599,7 @@ private:
 
   int addCop ( CarLexer& cl );
   int addGangster ( CarLexer& cl );
+  bool inner_route ( std::vector<unsigned int>& r, osmium::unsigned_object_id_type from, osmium::unsigned_object_id_type to );
 
   int m_size {10000};
   int m_time {0};
